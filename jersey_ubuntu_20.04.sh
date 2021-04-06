@@ -23,7 +23,7 @@ export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-ppc64el/
 wget http://www-eu.apache.org/dist/maven/maven-3/3.5.2/binaries/apache-maven-3.5.2-bin.tar.gz
 tar xzvf apache-maven-3.5.2-bin.tar.gz
 export PATH=$PATH:`pwd`/apache-maven-3.5.2/bin
-#sudo apt install  -y maven
+sudo apt install  -y maven
 mvn -version
 git clone https://github.com/eclipse-ee4j/jersey
 ## Build and test jersey
