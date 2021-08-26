@@ -24,7 +24,7 @@
     <parent>
         <groupId>org.glassfish.jersey.tests</groupId>
         <artifactId>project</artifactId>
-        <version>2.34-SNAPSHOT</version>
+        <version>2.35-SNAPSHOT</version>
     </parent>
 
     <groupId>org.glassfish.jersey.tests.integration</groupId>
@@ -88,6 +88,7 @@
         <module>jersey-4321</module>
         <module>jersey-4507</module>
         <module>jersey-4542</module>
+        <module>jersey-4697</module>
         <module>jersey-4722</module>
         <module>jetty-response-close</module>
         <module>microprofile</module>

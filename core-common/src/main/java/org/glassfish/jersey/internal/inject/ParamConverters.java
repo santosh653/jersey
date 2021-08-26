@@ -26,7 +26,11 @@ import java.lang.reflect.Type;
 import java.security.AccessController;
 import java.text.ParseException;
 import java.util.Date;
+import java.util.List;
 import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -37,6 +41,7 @@ import javax.ws.rs.ext.ParamConverterProvider;
 
 import org.glassfish.jersey.internal.LocalizationMessages;
 import org.glassfish.jersey.internal.util.ReflectionHelper;
+import org.glassfish.jersey.internal.util.collection.ClassTypePair;
 import org.glassfish.jersey.message.internal.HttpDateFormat;
 
 /**
@@ -251,17 +256,16 @@ public class ParamConverters {
 
     /**
      * Provider of {@link ParamConverter param converter} that produce the Optional instance
-     * by invoking {@link AggregatedProvider}.
+     * by invoking {@link ParamConverterProvider}.
      */
     @Singleton
-    public static class OptionalProvider implements ParamConverterProvider {
+    public static class OptionalCustomProvider implements ParamConverterProvider {
 
         // Delegates to this provider when the type of Optional is extracted.
-        private final AggregatedProvider aggregated;
+        private final InjectionManager manager;
 
-        @Inject
-        public OptionalProvider(AggregatedProvider aggregated) {
-            this.aggregated = aggregated;
+        public OptionalCustomProvider(InjectionManager manager) {
+            this.manager = manager;
         }
 
         @Override
@@ -273,18 +277,20 @@ public class ParamConverters {
                     if (value == null) {
                         return (T) Optional.empty();
                     } else {
-                        ParameterizedType parametrized = (ParameterizedType) genericType;
-                        Type type = parametrized.getActualTypeArguments()[0];
-                        T val = aggregated.getConverter((Class<T>) type, type, annotations).fromString(value.toString());
-                        if (val != null) {
-                            return (T) Optional.of(val);
-                        } else {
-                            /*
-                             *  In this case we don't send Optional.empty() because 'value' is not null.
-                             *  But we return null because the provider didn't find how to parse it.
-                             */
-                            return null;
+                        final List<ClassTypePair> ctps = ReflectionHelper.getTypeArgumentAndClass(genericType);
+                        final ClassTypePair ctp = (ctps.size() == 1) ? ctps.get(0) : null;
+
+                        for (ParamConverterProvider provider : Providers.getProviders(manager, ParamConverterProvider.class)) {
+                            final ParamConverter<?> converter = provider.getConverter(ctp.rawClass(), ctp.type(), annotations);
+                            if (converter != null) {
+                                return (T) Optional.of(value).map(s -> converter.fromString(value));
+                            }
                         }
+                        /*
+                         *  In this case we don't send Optional.empty() because 'value' is not null.
+                         *  But we return null because the provider didn't find how to parse it.
+                         */
+                        return null;
                     }
                 }
 
@@ -303,6 +309,91 @@ public class ParamConverters {
     }
 
     /**
+     * Provider of {@link ParamConverter param converter} that produce the OptionalInt, OptionalDouble
+     * or OptionalLong instance.
+     */
+    @Singleton
+    public static class OptionalProvider implements ParamConverterProvider {
+
+        @Override
+        public <T> ParamConverter<T> getConverter(Class<T> rawType, Type genericType, Annotation[] annotations) {
+            final Optionals optionals = Optionals.getOptional(rawType);
+            return (optionals == null) ? null : new ParamConverter<T>() {
+
+                @Override
+                public T fromString(String value) {
+                    if (value == null) {
+                        return (T) optionals.empty();
+                    } else {
+                        return (T) optionals.of(value);
+                    }
+                }
+
+                @Override
+                public String toString(T value) throws IllegalArgumentException {
+                    /*
+                     *  Unfortunately 'orElse' cannot be stored in an Optional. As only one value can
+                     *  be stored, it makes no sense that 'value' is Optional. It can just be the value.
+                     *  We don't fail here but we don't process it.
+                     */
+                    return null;
+                }
+            };
+        }
+
+        private static enum Optionals {
+
+            OPTIONAL_INT(OptionalInt.class) {
+                @Override
+                Object empty() {
+                    return OptionalInt.empty();
+                }
+                @Override
+                Object of(Object value) {
+                    return OptionalInt.of(Integer.parseInt((String) value));
+                }
+            }, OPTIONAL_DOUBLE(OptionalDouble.class) {
+                @Override
+                Object empty() {
+                    return OptionalDouble.empty();
+                }
+                @Override
+                Object of(Object value) {
+                    return OptionalDouble.of(Double.parseDouble((String) value));
+                }
+            }, OPTIONAL_LONG(OptionalLong.class) {
+                @Override
+                Object empty() {
+                    return OptionalLong.empty();
+                }
+                @Override
+                Object of(Object value) {
+                    return OptionalLong.of(Long.parseLong((String) value));
+                }
+            };
+
+            private final Class<?> clazz;
+
+            private Optionals(Class<?> clazz) {
+                this.clazz = clazz;
+            }
+
+            private static Optionals getOptional(Class<?> clazz) {
+                for (Optionals optionals : Optionals.values()) {
+                    if (optionals.clazz == clazz) {
+                        return optionals;
+                    }
+                }
+                return null;
+            }
+
+            abstract Object empty();
+
+            abstract Object of(Object value);
+        }
+    }
+
+    /**
      * Aggregated {@link ParamConverterProvider param converter provider}.
      */
     @Singleton
@@ -313,8 +404,9 @@ public class ParamConverters {
         /**
          * Create new aggregated {@link ParamConverterProvider param converter provider}.
          */
-        public AggregatedProvider() {
-            providers = new ParamConverterProvider[] {
+        @Inject
+        public AggregatedProvider(InjectionManager manager) {
+            this.providers = new ParamConverterProvider[] {
                     // ordering is important (e.g. Date provider must be executed before String Constructor
                     // as Date has a deprecated String constructor
                     new DateProvider(),
@@ -323,7 +415,8 @@ public class ParamConverters {
                     new CharacterProvider(),
                     new TypeFromString(),
                     new StringConstructor(),
-                    new OptionalProvider(this)
+                    new OptionalCustomProvider(manager),
+                    new OptionalProvider()
             };
         }
 

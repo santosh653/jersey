@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2020 Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2021 Oracle and/or its affiliates. All rights reserved.
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License v. 2.0, which is available at
@@ -22,6 +22,7 @@ import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.net.HttpURLConnection;
 import java.net.ProtocolException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.security.AccessController;
@@ -73,7 +74,8 @@ public class HttpUrlConnector implements Connector {
     private static final String ALLOW_RESTRICTED_HEADERS_SYSTEM_PROPERTY = "sun.net.http.allowRestrictedHeaders";
     // Avoid multi-thread uses of HttpsURLConnection.getDefaultSSLSocketFactory() because it does not implement a
     // proper lazy-initialization. See https://github.com/jersey/jersey/issues/3293
-    private static final SSLSocketFactory DEFAULT_SSL_SOCKET_FACTORY = HttpsURLConnection.getDefaultSSLSocketFactory();
+    private static final LazyValue<SSLSocketFactory> DEFAULT_SSL_SOCKET_FACTORY =
+            Values.lazy((Value<SSLSocketFactory>) () -> HttpsURLConnection.getDefaultSSLSocketFactory());
     // The list of restricted headers is extracted from sun.net.www.protocol.http.HttpURLConnection
     private static final String[] restrictedHeaders = {
             "Access-Control-Request-Headers",
@@ -305,7 +307,7 @@ public class HttpUrlConnector implements Connector {
                 suc.setHostnameVerifier(verifier);
             }
 
-            if (DEFAULT_SSL_SOCKET_FACTORY == suc.getSSLSocketFactory()) {
+            if (DEFAULT_SSL_SOCKET_FACTORY.get() == suc.getSSLSocketFactory()) {
                 // indicates that the custom socket factory was not set
                 suc.setSSLSocketFactory(sslSocketFactory.get());
             }
@@ -540,7 +542,11 @@ public class HttpUrlConnector implements Connector {
         if (connectorExtension.handleException(request, uc, ex)) {
             return null;
         }
-        if (uc.getResponseCode() == -1) {
+        /*
+         *  uc.getResponseCode triggers another request. If we already know it is a SocketTimeoutException
+         *  we can throw the exception directly. Otherwise the request will be 2 * timeout.
+         */
+        if (ex instanceof SocketTimeoutException || uc.getResponseCode() == -1) {
             throw ex;
         } else {
             return ex;
